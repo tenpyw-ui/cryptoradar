@@ -1,7 +1,9 @@
 "use strict";
-/* КриптоРадар — серверный ИИ paper-trading бот для Railway.
-   Бот сам запускается каждые RUN_INTERVAL_HOURS часов, торгует на фейковом
-   балансе через модель с OpenRouter и сохраняет историю в DATA_DIR/state.json. */
+/* КриптоРадар — серверный ИИ для крипто-аналитики и paper-trading (Railway).
+   1) Аналитик: каждые ANALYSIS_INTERVAL_HOURS изучает поток новостей со многих
+      источников + рынок + индекс страха/жадности и выдаёт структурированные выводы.
+   2) Трейдер: каждые RUN_INTERVAL_HOURS торгует на фейковом балансе.
+   Всё хранится в DATA_DIR/state.json. */
 
 const express = require("express");
 const fs = require("fs");
@@ -13,6 +15,7 @@ const STATE_FILE = path.join(DATA_DIR, "state.json");
 const OR_KEY = process.env.OPENROUTER_API_KEY || "";
 const MODEL = process.env.MODEL || "google/gemini-2.5-flash";
 const INTERVAL_H = parseFloat(process.env.RUN_INTERVAL_HOURS || "4");
+const ANALYSIS_INTERVAL_H = parseFloat(process.env.ANALYSIS_INTERVAL_HOURS || "6");
 const START_BALANCE = parseFloat(process.env.START_BALANCE || "100");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const FEE = 0.001;
@@ -21,12 +24,14 @@ const FEE = 0.001;
 function newState(){
   return {start: Date.now(), cash: START_BALANCE, holdings: {}, trades: [],
           reports: [], equity: [{t: Date.now(), v: START_BALANCE}],
-          btcStart: null, lastRun: 0, lastError: null};
+          btcStart: null, lastRun: 0, lastError: null,
+          analysis: null, analysisHistory: [], analysisError: null};
 }
 let state;
 try{
   fs.mkdirSync(DATA_DIR, {recursive: true});
   state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  if(!state.analysisHistory) state.analysisHistory = [];
   console.log("Состояние загружено:", STATE_FILE);
 }catch(e){
   state = newState();
@@ -85,18 +90,108 @@ async function fetchFNG(){
     return r.data && r.data[0] ? `${r.data[0].value} (${r.data[0].value_classification})` : "нет данных";
   }catch(e){ return "нет данных"; }
 }
+/* Сбор максимума новостей со многих источников */
+const NEWS_RSS = [
+  ["Cointelegraph", "https://cointelegraph.com/rss"],
+  ["CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"],
+  ["Decrypt", "https://decrypt.co/feed"],
+  ["Bitcoin Magazine", "https://bitcoinmagazine.com/feed"],
+  ["CryptoSlate", "https://cryptoslate.com/feed/"],
+  ["ForkLog", "https://forklog.com/feed/"]
+];
 async function fetchNews(){
+  let out = [];
   try{
     const r = await getJSON("https://min-api.cryptocompare.com/data/v2/news/?lang=EN");
-    return (r.Data || []).slice(0, 15).map(n => `- [${(n.source_info && n.source_info.name) || n.source}] ${n.title}`);
+    out = out.concat((r.Data || []).slice(0, 25).map(n => `[${(n.source_info && n.source_info.name) || n.source}] ${n.title}`));
   }catch(e){}
-  try{
-    const r = await getJSON("https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent("https://cointelegraph.com/rss"));
-    return (r.items || []).slice(0, 15).map(i => `- [Cointelegraph] ${i.title}`);
-  }catch(e){ return ["нет данных"]; }
+  const rss = await Promise.allSettled(NEWS_RSS.map(async ([name, url]) => {
+    const r = await getJSON("https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(url));
+    return (r.items || []).slice(0, 10).map(i => `[${name}] ${i.title}`);
+  }));
+  rss.forEach(x => { if(x.status === "fulfilled") out = out.concat(x.value); });
+  const seen = new Set(), dedup = [];
+  for(const s of out){ const k = s.toLowerCase().replace(/^\[[^\]]*\]\s*/, ""); if(!seen.has(k)){ seen.add(k); dedup.push(s); } }
+  return dedup.slice(0, 50);
 }
 
-/* ---------- логика бота ---------- */
+/* ---------- общий вызов модели ---------- */
+async function callModel(system, prompt){
+  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {"Authorization": "Bearer " + OR_KEY, "Content-Type": "application/json", "X-Title": "CryptoRadar"},
+    body: JSON.stringify({model: MODEL, temperature: 0.4,
+      messages: [{role: "system", content: system}, {role: "user", content: prompt}]})
+  });
+  const data = await r.json();
+  if(!r.ok || data.error) throw new Error((data.error && data.error.message) || ("OpenRouter HTTP " + r.status));
+  return data.choices[0].message.content;
+}
+function parseAI(text){
+  let t = String(text).trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if(a === -1 || b === -1) throw new Error("Модель не вернула JSON");
+  return JSON.parse(t.slice(a, b + 1));
+}
+function marketLines(coins, n){
+  return coins.slice(0, n).map(c =>
+    `${c.id} (${c.symbol.toUpperCase()}): $${c.current_price}; 1ч ${c.p1h != null ? c.p1h.toFixed(2) : "?"}%; 24ч ${c.p24h != null ? c.p24h.toFixed(2) : "?"}%; 7д ${c.p7d != null ? c.p7d.toFixed(2) : "?"}%; RSI ${c.rsi != null ? c.rsi.toFixed(0) : "?"}`
+  ).join("\n");
+}
+
+/* ---------- АНАЛИТИК ---------- */
+const ANALYST_SYSTEM = `Ты — профессиональный крипто-аналитик. Тебе дают свежий поток новостей со множества источников, данные рынка (топ-монеты, изменения, RSI) и индекс страха/жадности. Изучи ВСЁ и сделай выводы.
+ВАЖНО: ты НЕ предсказываешь точные цены и даты. Ты выявляешь, что сейчас происходит, какие риски и какие возможные сценарии с честной оценкой вероятности. Опирайся на конкретные новости и данные.
+Ответь СТРОГО валидным JSON без текста вокруг, всё по-русски, по схеме:
+{
+ "market_outlook":"3-5 предложений: что сейчас происходит на рынке и почему",
+ "sentiment":"risk-on|neutral|risk-off",
+ "key_risks":["конкретный риск 1","риск 2","риск 3"],
+ "opportunities":["где сейчас потенциал 1","2"],
+ "scenarios":[{"event":"что может произойти","probability":"низкая|средняя|высокая","impact":"как это повлияет на рынок","coins":["bitcoin"]}],
+ "coin_notes":[{"coin":"id монеты","sentiment":"bullish|neutral|bearish","note":"вывод с опорой на новость/данные"}],
+ "top_news":[{"title":"заголовок важной новости","why":"почему это важно для рынка"}]
+}`;
+
+let analyzing = false;
+async function runAnalysis(trigger){
+  if(analyzing) return {ok: false, msg: "Анализ уже идёт"};
+  if(!OR_KEY) return {ok: false, msg: "Не задан OPENROUTER_API_KEY"};
+  analyzing = true;
+  console.log("Аналитика (" + trigger + ")…");
+  try{
+    const coins = await fetchMarket(true);
+    const [fngStr, news] = await Promise.all([fetchFNG(), fetchNews()]);
+    const prompt = `ИНДЕКС СТРАХА И ЖАДНОСТИ: ${fngStr}
+
+РЫНОК (топ-40 монет):
+${marketLines(coins, 40)}
+
+ПОТОК НОВОСТЕЙ (${news.length} шт. со многих источников):
+${news.join("\n")}
+
+Изучи всё это и дай структурированную аналитику.`;
+    const raw = await callModel(ANALYST_SYSTEM, prompt);
+    const a = parseAI(raw);
+    a.t = Date.now(); a.model = MODEL; a.newsCount = news.length; a.trigger = trigger;
+    state.analysis = a;
+    state.analysisError = null;
+    state.analysisHistory.push({t: a.t, sentiment: a.sentiment, outlook: a.market_outlook});
+    if(state.analysisHistory.length > 300) state.analysisHistory = state.analysisHistory.slice(-300);
+    save();
+    console.log("Аналитика обновлена, новостей: " + news.length);
+    return {ok: true, msg: "Аналитика обновлена (новостей: " + news.length + ")"};
+  }catch(e){
+    state.analysisError = {t: Date.now(), msg: e.message};
+    save();
+    console.error("Ошибка аналитики:", e.message);
+    return {ok: false, msg: e.message};
+  }finally{
+    analyzing = false;
+  }
+}
+
+/* ---------- ТРЕЙДЕР ---------- */
 const AI_SYSTEM = `Ты — осторожный криптотрейдер, управляющий учебным (бумажным) портфелем размером около $${START_BALANCE}. Цель — увеличить баланс за месяц при разумном риске.
 Правила:
 - Можно торговать только монетами из списка (используй их id, например "bitcoin").
@@ -119,45 +214,27 @@ function buildPrompt(coins, fngStr, news){
     const h = state.holdings[id], p = price(coins, id);
     return `- ${id}: ${h.amount.toPrecision(6)} шт, ср. вход $${h.avg.toPrecision(6)}, тек. цена $${p}, стоимость $${p != null ? (h.amount*p).toFixed(2) : "?"}`;
   }).join("\n") || "нет";
-  const market = coins.slice(0, 30).map(c =>
-    `${c.id} (${c.symbol.toUpperCase()}): $${c.current_price}; 1ч ${c.p1h != null ? c.p1h.toFixed(2) : "?"}%; 24ч ${c.p24h != null ? c.p24h.toFixed(2) : "?"}%; 7д ${c.p7d != null ? c.p7d.toFixed(2) : "?"}%; RSI ${c.rsi != null ? c.rsi.toFixed(0) : "?"}; тех.балл ${c.score}`
-  ).join("\n");
+  const aHint = state.analysis ? `\nСВЕЖАЯ АНАЛИТИКА: ${state.analysis.market_outlook} (настроение: ${state.analysis.sentiment})` : "";
   const lastReports = state.reports.slice(-2).map(r => `(${new Date(r.t).toISOString().slice(0,10)}) ${r.outlook || ""}`).join("\n") || "это первая сессия";
   return `ТЕКУЩЕЕ СОСТОЯНИЕ ПОРТФЕЛЯ
 Свободный кэш: $${state.cash.toFixed(2)}
 Общая стоимость: $${eq.toFixed(2)} (старт $${START_BALANCE}, день теста ${Math.floor((Date.now()-state.start)/864e5)+1})
 Позиции:
 ${hold}
+${aHint}
 
 ИНДЕКС СТРАХА И ЖАДНОСТИ: ${fngStr}
 
 РЫНОК (топ-30 монет):
-${market}
+${marketLines(coins, 30)}
 
 СВЕЖИЕ НОВОСТИ:
-${news.join("\n")}
+${news.slice(0, 20).join("\n")}
 
 ТВОИ ПРОШЛЫЕ ПЛАНЫ:
 ${lastReports}
 
 Прими торговые решения сейчас.`;
-}
-async function callOpenRouter(prompt){
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {"Authorization": "Bearer " + OR_KEY, "Content-Type": "application/json", "X-Title": "CryptoRadar Bot"},
-    body: JSON.stringify({model: MODEL, temperature: 0.4,
-      messages: [{role: "system", content: AI_SYSTEM}, {role: "user", content: prompt}]})
-  });
-  const data = await r.json();
-  if(!r.ok || data.error) throw new Error((data.error && data.error.message) || ("OpenRouter HTTP " + r.status));
-  return data.choices[0].message.content;
-}
-function parseAI(text){
-  let t = String(text).trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
-  const a = t.indexOf("{"), b = t.lastIndexOf("}");
-  if(a === -1 || b === -1) throw new Error("Модель не вернула JSON");
-  return JSON.parse(t.slice(a, b + 1));
 }
 function execute(coins, actions){
   const done = [];
@@ -190,18 +267,17 @@ function execute(coins, actions){
   state.trades = state.trades.concat(done);
   return done;
 }
-
 let running = false;
 async function runSession(trigger){
   if(running) return {ok: false, msg: "Сессия уже идёт"};
   if(!OR_KEY) return {ok: false, msg: "Не задан OPENROUTER_API_KEY"};
   running = true;
-  console.log("Сессия ИИ (" + trigger + ")…");
+  console.log("Сессия трейдера (" + trigger + ")…");
   try{
     const coins = await fetchMarket(true);
     if(!state.btcStart){ const b = coins.find(c => c.id === "bitcoin"); if(b) state.btcStart = b.current_price; }
     const [fngStr, news] = await Promise.all([fetchFNG(), fetchNews()]);
-    const raw = await callOpenRouter(buildPrompt(coins, fngStr, news));
+    const raw = await callModel(AI_SYSTEM, buildPrompt(coins, fngStr, news));
     const res = parseAI(raw);
     const done = execute(coins, res.actions);
     state.lastRun = Date.now();
@@ -237,12 +313,14 @@ async function equityTick(){
   }catch(e){ console.error("equityTick:", e.message); }
 }
 
-/* планировщик: проверка раз в минуту */
+/* планировщик */
 setInterval(() => {
   if(Date.now() - (state.lastRun || 0) >= INTERVAL_H * 3600 * 1000) runSession("auto");
+  if(Date.now() - ((state.analysis && state.analysis.t) || 0) >= ANALYSIS_INTERVAL_H * 3600 * 1000) runAnalysis("auto");
 }, 60 * 1000);
 setInterval(equityTick, 30 * 60 * 1000);
-setTimeout(() => runSession("startup"), 15 * 1000); // первая сессия через 15 сек после старта
+setTimeout(() => runAnalysis("startup"), 12 * 1000);
+setTimeout(() => runSession("startup"), 40 * 1000);
 setTimeout(equityTick, 5 * 1000);
 
 /* ---------- веб-сервер ---------- */
@@ -256,17 +334,14 @@ function auth(req, res){
   return true;
 }
 app.get("/api/state", (req, res) => {
-  res.json({bot: state, config: {model: MODEL, intervalH: INTERVAL_H, startBalance: START_BALANCE, hasKey: !!OR_KEY, hasToken: !!ADMIN_TOKEN, running}});
+  res.json({bot: state, config: {model: MODEL, intervalH: INTERVAL_H, analysisIntervalH: ANALYSIS_INTERVAL_H, startBalance: START_BALANCE, hasKey: !!OR_KEY, hasToken: !!ADMIN_TOKEN, running, analyzing}});
 });
-app.post("/api/run", async (req, res) => {
-  if(!auth(req, res)) return;
-  const r = await runSession("manual");
-  res.json(r);
-});
+app.post("/api/run", async (req, res) => { if(!auth(req, res)) return; res.json(await runSession("manual")); });
+app.post("/api/analyze", async (req, res) => { if(!auth(req, res)) return; res.json(await runAnalysis("manual")); });
 app.post("/api/reset", (req, res) => {
   if(!auth(req, res)) return;
   state = newState();
   save();
   res.json({ok: true, msg: "Тест сброшен, баланс $" + START_BALANCE});
 });
-app.listen(PORT, () => console.log("КриптоРадар запущен на порту " + PORT + ", модель " + MODEL + ", интервал " + INTERVAL_H + " ч"));
+app.listen(PORT, () => console.log("КриптоРадар на порту " + PORT + ", модель " + MODEL + ", трейдер " + INTERVAL_H + "ч, аналитика " + ANALYSIS_INTERVAL_H + "ч"));
