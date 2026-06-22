@@ -1,9 +1,9 @@
 "use strict";
-/* КриптоРадар — серверный ИИ для крипто-аналитики и paper-trading (Railway).
-   1) Аналитик: каждые ANALYSIS_INTERVAL_HOURS изучает поток новостей со многих
-      источников + рынок + индекс страха/жадности и выдаёт структурированные выводы.
-   2) Трейдер: каждые RUN_INTERVAL_HOURS торгует на фейковом балансе.
-   Всё хранится в DATA_DIR/state.json. */
+/* КриптоРадар — серверный ИИ: аналитика + несколько paper-trading ботов (Railway).
+   - Аналитик каждые ANALYSIS_INTERVAL_HOURS изучает поток новостей + рынок.
+   - 3 независимых бота (каждый со своим набором монет и стилем) торгуют на $START_BALANCE
+     каждые RUN_INTERVAL_HOURS. Сравнение стратегий — на сайте.
+   Хранится в DATA_DIR/state.json. */
 
 const express = require("express");
 const fs = require("fs");
@@ -14,29 +14,50 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const OR_KEY = process.env.OPENROUTER_API_KEY || "";
 const MODEL = process.env.MODEL || "google/gemini-2.5-flash";
-const INTERVAL_H = parseFloat(process.env.RUN_INTERVAL_HOURS || "4");
-const ANALYSIS_INTERVAL_H = parseFloat(process.env.ANALYSIS_INTERVAL_HOURS || "6");
-const START_BALANCE = parseFloat(process.env.START_BALANCE || "100");
+const INTERVAL_H = parseFloat(process.env.RUN_INTERVAL_HOURS || "12");
+const ANALYSIS_INTERVAL_H = parseFloat(process.env.ANALYSIS_INTERVAL_HOURS || "1");
+const START_BALANCE = parseFloat(process.env.START_BALANCE || "1000");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const FEE = 0.001;
 
+/* определения ботов */
+const BOTS_DEF = [
+  {id: "btceth", label: "BTC + ETH", coins: ["bitcoin", "ethereum"],
+   style: "Ты консервативный трейдер: торгуешь только Bitcoin и Ethereum. Цель — рост при низком риске, без резких движений."},
+  {id: "alts", label: "5 крупных альтов", coins: ["solana", "binancecoin", "ripple", "cardano", "dogecoin"],
+   style: "Ты торгуешь только крупными альткоинами из списка. Ищешь моментум и возможности, но контролируешь риск и не вкладываешь всё в одну монету."},
+  {id: "all", label: "Весь топ-100", coins: null,
+   style: "Ты можешь торговать любой монетой из топ-100. Ищешь лучшие возможности по всему рынку, диверсифицируешь."}
+];
+
 /* ---------- состояние ---------- */
+function newBot(def){
+  return {label: def.label, coins: def.coins, style: def.style,
+          cash: START_BALANCE, holdings: {}, trades: [], reports: [],
+          equity: [{t: Date.now(), v: START_BALANCE}], btcStart: null,
+          lastRun: 0, lastError: null, lastPrices: {}, btcPrice: null};
+}
 function newState(){
-  return {start: Date.now(), cash: START_BALANCE, holdings: {}, trades: [],
-          reports: [], equity: [{t: Date.now(), v: START_BALANCE}],
-          btcStart: null, lastRun: 0, lastError: null,
-          analysis: null, analysisHistory: [], analysisError: null};
+  const bots = {};
+  BOTS_DEF.forEach(d => bots[d.id] = newBot(d));
+  return {start: Date.now(), analysis: null, analysisHistory: [], analysisError: null, bots};
 }
 let state;
 try{
   fs.mkdirSync(DATA_DIR, {recursive: true});
   state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  if(!state.bots) state = newState();
   if(!state.analysisHistory) state.analysisHistory = [];
   console.log("Состояние загружено:", STATE_FILE);
 }catch(e){
   state = newState();
-  console.log("Новое состояние, старт $" + START_BALANCE);
+  console.log("Новое состояние");
 }
+/* синхронизируем определения ботов (label/coins/style) и добавляем недостающих */
+BOTS_DEF.forEach(d => {
+  if(!state.bots[d.id]) state.bots[d.id] = newBot(d);
+  else { state.bots[d.id].label = d.label; state.bots[d.id].coins = d.coins; state.bots[d.id].style = d.style; }
+});
 function save(){
   try{ fs.writeFileSync(STATE_FILE, JSON.stringify(state)); }
   catch(e){ console.error("Ошибка сохранения:", e.message); }
@@ -52,10 +73,7 @@ function calcRSI(prices, period){
   period = period || 14;
   if(!prices || prices.length < period + 1) return null;
   let gains = 0, losses = 0;
-  for(let i = 1; i <= period; i++){
-    const d = prices[i] - prices[i-1];
-    if(d >= 0) gains += d; else losses -= d;
-  }
+  for(let i = 1; i <= period; i++){ const d = prices[i] - prices[i-1]; if(d >= 0) gains += d; else losses -= d; }
   let ag = gains/period, al = losses/period;
   for(let i = period + 1; i < prices.length; i++){
     const d = prices[i] - prices[i-1];
@@ -74,12 +92,6 @@ async function fetchMarket(sparkline){
     if(sparkline){
       const sp = (c.sparkline_in_7d && c.sparkline_in_7d.price) || [];
       c.rsi = calcRSI(sp);
-      const sma = sp.length ? sp.reduce((a,b)=>a+b,0)/sp.length : null;
-      let score = 0;
-      if(c.rsi != null){ if(c.rsi < 30) score += 2; else if(c.rsi < 40) score += 1; else if(c.rsi > 70) score -= 2; else if(c.rsi > 60) score -= 1; }
-      if(sma != null){ if(c.current_price > sma*1.02) score += 1; else if(c.current_price < sma*0.98) score -= 1; }
-      if(c.p7d != null){ if(c.p7d > 5) score += 1; else if(c.p7d < -5) score -= 1; }
-      c.score = score;
     }
     return c;
   });
@@ -90,7 +102,6 @@ async function fetchFNG(){
     return r.data && r.data[0] ? `${r.data[0].value} (${r.data[0].value_classification})` : "нет данных";
   }catch(e){ return "нет данных"; }
 }
-/* Сбор максимума новостей со многих источников */
 const NEWS_RSS = [
   ["Cointelegraph", "https://cointelegraph.com/rss"],
   ["CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"],
@@ -139,15 +150,15 @@ function marketLines(coins, n){
   ).join("\n");
 }
 
-/* ---------- АНАЛИТИК ---------- */
+/* ---------- АНАЛИТИК (общий) ---------- */
 const ANALYST_SYSTEM = `Ты — профессиональный крипто-аналитик. Тебе дают свежий поток новостей со множества источников, данные рынка (топ-монеты, изменения, RSI) и индекс страха/жадности. Изучи ВСЁ и сделай выводы.
 ВАЖНО: ты НЕ предсказываешь точные цены и даты. Ты выявляешь, что сейчас происходит, какие риски и какие возможные сценарии с честной оценкой вероятности. Опирайся на конкретные новости и данные.
 Ответь СТРОГО валидным JSON без текста вокруг, всё по-русски, по схеме:
 {
  "market_outlook":"3-5 предложений: что сейчас происходит на рынке и почему",
  "sentiment":"risk-on|neutral|risk-off",
- "key_risks":["конкретный риск 1","риск 2","риск 3"],
- "opportunities":["где сейчас потенциал 1","2"],
+ "key_risks":["риск 1","риск 2","риск 3"],
+ "opportunities":["возможность 1","2"],
  "scenarios":[{"event":"что может произойти","probability":"низкая|средняя|высокая","impact":"как это повлияет на рынок","coins":["bitcoin"]}],
  "coin_notes":[{"coin":"id монеты","sentiment":"bullish|neutral|bearish","note":"вывод с опорой на новость/данные"}],
  "top_news":[{"title":"заголовок важной новости","why":"почему это важно для рынка"}]
@@ -167,160 +178,169 @@ async function runAnalysis(trigger){
 РЫНОК (топ-40 монет):
 ${marketLines(coins, 40)}
 
-ПОТОК НОВОСТЕЙ (${news.length} шт. со многих источников):
+ПОТОК НОВОСТЕЙ (${news.length} шт.):
 ${news.join("\n")}
 
-Изучи всё это и дай структурированную аналитику.`;
-    const raw = await callModel(ANALYST_SYSTEM, prompt);
-    const a = parseAI(raw);
-    a.t = Date.now(); a.model = MODEL; a.newsCount = news.length; a.trigger = trigger;
-    state.analysis = a;
-    state.analysisError = null;
+Изучи всё и дай структурированную аналитику.`;
+    const a = parseAI(await callModel(ANALYST_SYSTEM, prompt));
+    a.t = Date.now(); a.model = MODEL; a.newsCount = news.length;
+    state.analysis = a; state.analysisError = null;
     state.analysisHistory.push({t: a.t, sentiment: a.sentiment, outlook: a.market_outlook});
     if(state.analysisHistory.length > 300) state.analysisHistory = state.analysisHistory.slice(-300);
     save();
     console.log("Аналитика обновлена, новостей: " + news.length);
     return {ok: true, msg: "Аналитика обновлена (новостей: " + news.length + ")"};
   }catch(e){
-    state.analysisError = {t: Date.now(), msg: e.message};
-    save();
+    state.analysisError = {t: Date.now(), msg: e.message}; save();
     console.error("Ошибка аналитики:", e.message);
     return {ok: false, msg: e.message};
-  }finally{
-    analyzing = false;
-  }
+  }finally{ analyzing = false; }
 }
 
-/* ---------- ТРЕЙДЕР ---------- */
-const AI_SYSTEM = `Ты — осторожный криптотрейдер, управляющий учебным (бумажным) портфелем размером около $${START_BALANCE}. Цель — увеличить баланс за месяц при разумном риске.
-Правила:
-- Можно торговать только монетами из списка (используй их id, например "bitcoin").
-- Комиссия 0.1% за сделку. Не делай бессмысленных микросделок меньше $2.
-- Максимум 5 действий за сессию. Можно не делать ничего (пустой список actions), если рынок неясен.
-- Не вкладывай всё в одну монету, держи риск под контролем.
-- Учитывай новости и индекс страха/жадности, объясняй решения по-русски.
-Ответь СТРОГО валидным JSON без какого-либо текста вокруг, по схеме:
-{"analysis":"краткий анализ рынка по-русски","actions":[{"type":"buy"|"sell","coin":"id монеты","usd":число,"reason":"почему"}],"outlook":"план до следующей сессии"}`;
-
+/* ---------- ТРЕЙДЕРЫ ---------- */
+function botSystem(bot){
+  const list = bot.coins ? bot.coins.join(", ") : "любая монета из топ-100";
+  return `Ты — криптотрейдер, управляющий учебным (бумажным) портфелем около $${START_BALANCE}. ${bot.style}
+РАЗРЕШЁННЫЕ МОНЕТЫ: ${list}. Используй только их id (например "bitcoin").
+Правила: комиссия 0.1% за сделку; не делай микросделок меньше $20; максимум 5 действий за сессию; можно ничего не делать (пустой actions), если неясно; держи риск под контролем; объясняй решения по-русски.
+Ответь СТРОГО валидным JSON без текста вокруг, по схеме:
+{"analysis":"краткий анализ по-русски","actions":[{"type":"buy"|"sell","coin":"id","usd":число,"reason":"почему"}],"outlook":"план до следующей сессии"}`;
+}
 function price(coins, id){ const c = coins.find(x => x.id === id); return c ? c.current_price : null; }
-function equity(coins){
-  let v = state.cash;
-  for(const id in state.holdings){ const p = price(coins, id); if(p != null) v += state.holdings[id].amount * p; }
+function botEquity(bot, coins){
+  let v = bot.cash;
+  for(const id in bot.holdings){ const p = price(coins, id); if(p != null) v += bot.holdings[id].amount * p; }
   return v;
 }
-function buildPrompt(coins, fngStr, news){
-  const eq = equity(coins);
-  const hold = Object.keys(state.holdings).map(id => {
-    const h = state.holdings[id], p = price(coins, id);
-    return `- ${id}: ${h.amount.toPrecision(6)} шт, ср. вход $${h.avg.toPrecision(6)}, тек. цена $${p}, стоимость $${p != null ? (h.amount*p).toFixed(2) : "?"}`;
+function buildPrompt(bot, universe, coins, fngStr, news){
+  const eq = botEquity(bot, coins);
+  const hold = Object.keys(bot.holdings).map(id => {
+    const h = bot.holdings[id], p = price(coins, id);
+    return `- ${id}: ${h.amount.toPrecision(6)} шт, ср.вход $${h.avg.toPrecision(6)}, цена $${p}, стоимость $${p != null ? (h.amount*p).toFixed(2) : "?"}`;
   }).join("\n") || "нет";
-  const aHint = state.analysis ? `\nСВЕЖАЯ АНАЛИТИКА: ${state.analysis.market_outlook} (настроение: ${state.analysis.sentiment})` : "";
-  const lastReports = state.reports.slice(-2).map(r => `(${new Date(r.t).toISOString().slice(0,10)}) ${r.outlook || ""}`).join("\n") || "это первая сессия";
-  return `ТЕКУЩЕЕ СОСТОЯНИЕ ПОРТФЕЛЯ
-Свободный кэш: $${state.cash.toFixed(2)}
-Общая стоимость: $${eq.toFixed(2)} (старт $${START_BALANCE}, день теста ${Math.floor((Date.now()-state.start)/864e5)+1})
+  const aHint = state.analysis ? `\nОБЩАЯ АНАЛИТИКА РЫНКА: ${state.analysis.market_outlook} (настроение: ${state.analysis.sentiment})` : "";
+  const last = bot.reports.slice(-2).map(r => `(${new Date(r.t).toISOString().slice(0,10)}) ${r.outlook || ""}`).join("\n") || "первая сессия";
+  return `СОСТОЯНИЕ ПОРТФЕЛЯ
+Кэш: $${bot.cash.toFixed(2)} · Всего: $${eq.toFixed(2)} (старт $${START_BALANCE})
 Позиции:
 ${hold}
 ${aHint}
 
 ИНДЕКС СТРАХА И ЖАДНОСТИ: ${fngStr}
 
-РЫНОК (топ-30 монет):
-${marketLines(coins, 30)}
+ДОСТУПНЫЙ РЫНОК:
+${marketLines(universe, 40)}
 
 СВЕЖИЕ НОВОСТИ:
-${news.slice(0, 20).join("\n")}
+${news.slice(0, 18).join("\n")}
 
-ТВОИ ПРОШЛЫЕ ПЛАНЫ:
-${lastReports}
+ПРОШЛЫЕ ПЛАНЫ:
+${last}
 
-Прими торговые решения сейчас.`;
+Прими торговые решения.`;
 }
-function execute(coins, actions){
+function execute(bot, coins, actions, allowed){
   const done = [];
   (actions || []).slice(0, 6).forEach(act => {
     const id = String(act.coin || "").toLowerCase().trim();
+    if(allowed && !allowed.has(id)) return;
     const p = price(coins, id);
     let usd = +act.usd;
     if(!p || !(usd > 0)) return;
     if(act.type === "buy"){
-      usd = Math.min(usd, state.cash);
+      usd = Math.min(usd, bot.cash);
       if(usd < 1) return;
       const amount = usd * (1 - FEE) / p;
-      const h = state.holdings[id] || {amount: 0, avg: 0};
+      const h = bot.holdings[id] || {amount: 0, avg: 0};
       h.avg = (h.avg * h.amount + p * amount) / (h.amount + amount);
-      h.amount += amount;
-      state.holdings[id] = h;
-      state.cash -= usd;
+      h.amount += amount; bot.holdings[id] = h; bot.cash -= usd;
       done.push({t: Date.now(), type: "buy", id, price: p, usd: +usd.toFixed(2), reason: act.reason || ""});
     } else if(act.type === "sell"){
-      const h = state.holdings[id];
+      const h = bot.holdings[id];
       if(!h || h.amount <= 0) return;
       const amount = Math.min(h.amount, usd / p);
       if(amount * p < 0.5) return;
       h.amount -= amount;
-      if(h.amount * p < 0.01) delete state.holdings[id];
-      state.cash += amount * p * (1 - FEE);
+      if(h.amount * p < 0.01) delete bot.holdings[id];
+      bot.cash += amount * p * (1 - FEE);
       done.push({t: Date.now(), type: "sell", id, price: p, usd: +(amount*p).toFixed(2), reason: act.reason || ""});
     }
   });
-  state.trades = state.trades.concat(done);
+  bot.trades = bot.trades.concat(done);
   return done;
 }
-let running = false;
-async function runSession(trigger){
-  if(running) return {ok: false, msg: "Сессия уже идёт"};
+const runningBots = {};
+async function runSession(botId, trigger){
+  const bot = state.bots[botId];
+  if(!bot) return {ok: false, msg: "Нет такого бота"};
+  if(runningBots[botId]) return {ok: false, msg: "Сессия уже идёт"};
   if(!OR_KEY) return {ok: false, msg: "Не задан OPENROUTER_API_KEY"};
-  running = true;
-  console.log("Сессия трейдера (" + trigger + ")…");
+  runningBots[botId] = true;
+  console.log("Сессия [" + botId + "] (" + trigger + ")…");
   try{
     const coins = await fetchMarket(true);
-    if(!state.btcStart){ const b = coins.find(c => c.id === "bitcoin"); if(b) state.btcStart = b.current_price; }
+    const btc = coins.find(c => c.id === "bitcoin");
+    if(!bot.btcStart && btc) bot.btcStart = btc.current_price;
+    const universe = bot.coins ? coins.filter(c => bot.coins.includes(c.id)) : coins;
+    const allowed = bot.coins ? new Set(bot.coins) : null;
     const [fngStr, news] = await Promise.all([fetchFNG(), fetchNews()]);
-    const raw = await callModel(AI_SYSTEM, buildPrompt(coins, fngStr, news));
-    const res = parseAI(raw);
-    const done = execute(coins, res.actions);
-    state.lastRun = Date.now();
-    state.lastError = null;
-    const eq = +equity(coins).toFixed(2);
-    state.equity.push({t: Date.now(), v: eq});
-    state.reports.push({t: Date.now(), model: MODEL, analysis: res.analysis || "", outlook: res.outlook || "", actions: done, equity: eq, trigger});
-    if(state.equity.length > 5000) state.equity = state.equity.slice(-5000);
+    const res = parseAI(await callModel(botSystem(bot), buildPrompt(bot, universe, coins, fngStr, news)));
+    const done = execute(bot, coins, res.actions, allowed);
+    bot.lastRun = Date.now(); bot.lastError = null;
+    const eq = +botEquity(bot, coins).toFixed(2);
+    bot.equity.push({t: Date.now(), v: eq});
+    bot.btcPrice = btc ? btc.current_price : bot.btcPrice;
+    bot.lastPrices = {};
+    for(const id in bot.holdings) bot.lastPrices[id] = price(coins, id);
+    bot.reports.push({t: Date.now(), model: MODEL, analysis: res.analysis || "", outlook: res.outlook || "", actions: done, equity: eq, trigger});
+    if(bot.equity.length > 5000) bot.equity = bot.equity.slice(-5000);
     save();
-    console.log("Сессия ок: сделок " + done.length + ", баланс $" + eq);
-    return {ok: true, msg: "Сделок: " + done.length + ", баланс $" + eq};
+    console.log("[" + botId + "] ок: сделок " + done.length + ", баланс $" + eq);
+    return {ok: true, msg: bot.label + ": сделок " + done.length + ", баланс $" + eq};
   }catch(e){
-    state.lastError = {t: Date.now(), msg: e.message};
-    save();
-    console.error("Ошибка сессии:", e.message);
+    bot.lastError = {t: Date.now(), msg: e.message}; save();
+    console.error("[" + botId + "] ошибка:", e.message);
     return {ok: false, msg: e.message};
-  }finally{
-    running = false;
-  }
+  }finally{ runningBots[botId] = false; }
 }
 
-/* запись кривой баланса каждые 30 минут */
+/* кривая баланса всех ботов каждые 30 минут */
 async function equityTick(){
   try{
     const coins = await fetchMarket(false);
-    if(!state.btcStart){ const b = coins.find(c => c.id === "bitcoin"); if(b) state.btcStart = b.current_price; }
-    state.btcPrice = (coins.find(c => c.id === "bitcoin") || {}).current_price || state.btcPrice;
-    state.equity.push({t: Date.now(), v: +equity(coins).toFixed(2)});
-    if(state.equity.length > 5000) state.equity = state.equity.slice(-5000);
-    state.lastPrices = {};
-    for(const id in state.holdings) state.lastPrices[id] = price(coins, id);
+    const btc = coins.find(c => c.id === "bitcoin");
+    for(const id in state.bots){
+      const bot = state.bots[id];
+      if(!bot.btcStart && btc) bot.btcStart = btc.current_price;
+      bot.btcPrice = btc ? btc.current_price : bot.btcPrice;
+      bot.equity.push({t: Date.now(), v: +botEquity(bot, coins).toFixed(2)});
+      if(bot.equity.length > 5000) bot.equity = bot.equity.slice(-5000);
+      bot.lastPrices = {};
+      for(const h in bot.holdings) bot.lastPrices[h] = price(coins, h);
+    }
     save();
   }catch(e){ console.error("equityTick:", e.message); }
 }
 
-/* планировщик */
+/* планировщик: один бот за тик (стаггеринг), плюс аналитика */
+let tradeBusy = false;
+async function tickTrade(){
+  if(tradeBusy) return;
+  const dueId = BOTS_DEF.map(d => d.id).find(id => {
+    const b = state.bots[id];
+    return b && !runningBots[id] && Date.now() - (b.lastRun || 0) >= INTERVAL_H * 3600 * 1000;
+  });
+  if(!dueId) return;
+  tradeBusy = true;
+  try{ await runSession(dueId, "auto"); } finally{ tradeBusy = false; }
+}
+setInterval(tickTrade, 60 * 1000);
 setInterval(() => {
-  if(Date.now() - (state.lastRun || 0) >= INTERVAL_H * 3600 * 1000) runSession("auto");
   if(Date.now() - ((state.analysis && state.analysis.t) || 0) >= ANALYSIS_INTERVAL_H * 3600 * 1000) runAnalysis("auto");
 }, 60 * 1000);
 setInterval(equityTick, 30 * 60 * 1000);
 setTimeout(() => runAnalysis("startup"), 12 * 1000);
-setTimeout(() => runSession("startup"), 40 * 1000);
+setTimeout(tickTrade, 45 * 1000);
 setTimeout(equityTick, 5 * 1000);
 
 /* ---------- веб-сервер ---------- */
@@ -328,20 +348,27 @@ const app = express();
 app.use(express.static(path.join(__dirname, "public")));
 function auth(req, res){
   if(ADMIN_TOKEN && req.query.token !== ADMIN_TOKEN && req.headers["x-token"] !== ADMIN_TOKEN){
-    res.status(403).json({ok: false, msg: "Неверный токен"});
-    return false;
+    res.status(403).json({ok: false, msg: "Неверный токен"}); return false;
   }
   return true;
 }
 app.get("/api/state", (req, res) => {
-  res.json({bot: state, config: {model: MODEL, intervalH: INTERVAL_H, analysisIntervalH: ANALYSIS_INTERVAL_H, startBalance: START_BALANCE, hasKey: !!OR_KEY, hasToken: !!ADMIN_TOKEN, running, analyzing}});
+  res.json({bots: state.bots, analysis: state.analysis, analysisError: state.analysisError, start: state.start,
+    config: {model: MODEL, intervalH: INTERVAL_H, analysisIntervalH: ANALYSIS_INTERVAL_H, startBalance: START_BALANCE,
+             hasKey: !!OR_KEY, hasToken: !!ADMIN_TOKEN, analyzing, botOrder: BOTS_DEF.map(d => d.id)}});
 });
-app.post("/api/run", async (req, res) => { if(!auth(req, res)) return; res.json(await runSession("manual")); });
+app.post("/api/run", async (req, res) => {
+  if(!auth(req, res)) return;
+  const id = req.query.bot;
+  if(id) return res.json(await runSession(id, "manual"));
+  const out = [];
+  for(const d of BOTS_DEF) out.push(await runSession(d.id, "manual"));
+  res.json({ok: true, msg: out.map(o => o.msg).join(" · ")});
+});
 app.post("/api/analyze", async (req, res) => { if(!auth(req, res)) return; res.json(await runAnalysis("manual")); });
 app.post("/api/reset", (req, res) => {
   if(!auth(req, res)) return;
-  state = newState();
-  save();
-  res.json({ok: true, msg: "Тест сброшен, баланс $" + START_BALANCE});
+  state = newState(); save();
+  res.json({ok: true, msg: "Сброшено: 3 бота по $" + START_BALANCE});
 });
-app.listen(PORT, () => console.log("КриптоРадар на порту " + PORT + ", модель " + MODEL + ", трейдер " + INTERVAL_H + "ч, аналитика " + ANALYSIS_INTERVAL_H + "ч"));
+app.listen(PORT, () => console.log("КриптоРадар: " + BOTS_DEF.length + " бота, трейд " + INTERVAL_H + "ч, аналитика " + ANALYSIS_INTERVAL_H + "ч, порт " + PORT));
