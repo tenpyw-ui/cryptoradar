@@ -25,6 +25,7 @@ header.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-conte
 button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:13px}
 button:hover{border-color:var(--accent)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.botbtn.active{background:var(--accent);border-color:var(--accent);color:#fff}
 nav.tabs{display:flex;gap:4px;margin:16px 0;flex-wrap:wrap}
 nav.tabs button{border-radius:8px 8px 0 0;border-bottom:2px solid transparent;background:transparent;border:none;padding:9px 16px;color:var(--muted);font-size:14px}
 nav.tabs button.active{color:var(--text);border-bottom:2px solid var(--accent);font-weight:600}
@@ -82,6 +83,7 @@ td .coin .sym{color:var(--muted);font-size:12px;text-transform:uppercase}
 .bullet{padding:9px 14px;border-bottom:1px solid var(--border);font-size:13px}
 .bullet:last-child{border-bottom:none}
 .outlook{font-size:15px;line-height:1.6}
+.runbtn{padding:4px 10px;font-size:12px}
 footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;border-top:1px solid var(--border);margin-top:30px}
 .hidden{display:none}
 </style>
@@ -106,7 +108,7 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
     <button data-tab="signals">Сигналы</button>
     <button data-tab="news">Новости</button>
     <button data-tab="portfolio">Портфель</button>
-    <button data-tab="ai">🤖 ИИ-Трейдер</button>
+    <button data-tab="ai">🤖 ИИ-Боты</button>
   </nav>
 
   <section id="tab-market">
@@ -140,7 +142,7 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
   </section>
 
   <section id="tab-analytics" class="hidden">
-    <div class="disclaimer">🧠 ИИ изучает поток новостей со множества источников, рынок и индекс настроений и делает выводы. Это <b>аналитика и сценарии с оценкой вероятности, а не предсказание</b>. Никакой алгоритм не знает заранее, что и когда случится. Используйте как помощь в решениях, а не как гарантию.</div>
+    <div class="disclaimer">🧠 ИИ изучает поток новостей со множества источников, рынок и индекс настроений и делает выводы. Это <b>аналитика и сценарии с оценкой вероятности, а не предсказание</b>. Никакой алгоритм не знает заранее, что и когда случится.</div>
     <div class="toolbar">
       <input type="password" id="anToken" placeholder="Админ-токен (если задан)" style="min-width:190px">
       <button class="primary" id="anRun">🧠 Обновить анализ сейчас</button>
@@ -148,14 +150,8 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
     </div>
     <div class="cards" id="anCards"></div>
     <div class="grid2">
-      <div class="card" style="padding:0">
-        <div class="panelh">⚠️ Ключевые риски</div>
-        <div id="anRisks"><div class="loading">Нет данных</div></div>
-      </div>
-      <div class="card" style="padding:0">
-        <div class="panelh">💡 Возможности</div>
-        <div id="anOpps"><div class="loading">Нет данных</div></div>
-      </div>
+      <div class="card" style="padding:0"><div class="panelh">⚠️ Ключевые риски</div><div id="anRisks"><div class="loading">Нет данных</div></div></div>
+      <div class="card" style="padding:0"><div class="panelh">💡 Возможности</div><div id="anOpps"><div class="loading">Нет данных</div></div></div>
     </div>
     <div class="card" style="margin-top:14px;padding:0">
       <div class="panelh">🎲 Сценарии (вероятность → влияние)</div>
@@ -167,14 +163,8 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
       </div>
     </div>
     <div class="grid2" style="margin-top:14px">
-      <div class="card" style="padding:0">
-        <div class="panelh">🪙 Заметки по монетам</div>
-        <div id="anCoins"><div class="loading">Нет данных</div></div>
-      </div>
-      <div class="card" style="padding:0">
-        <div class="panelh">📰 Важнейшие новости (по версии ИИ)</div>
-        <div class="news" id="anNews"><div class="loading">Нет данных</div></div>
-      </div>
+      <div class="card" style="padding:0"><div class="panelh">🪙 Заметки по монетам</div><div id="anCoins"><div class="loading">Нет данных</div></div></div>
+      <div class="card" style="padding:0"><div class="panelh">📰 Важнейшие новости (по версии ИИ)</div><div class="news" id="anNews"><div class="loading">Нет данных</div></div></div>
     </div>
   </section>
 
@@ -220,23 +210,32 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
   </section>
 
   <section id="tab-ai" class="hidden">
-    <div class="disclaimer">🧪 Симуляция на фейковом балансе — реальные деньги не используются. Бот работает на сервере и торгует сам по расписанию. Результат теста за месяц не гарантирует доходность на реальных деньгах.</div>
+    <div class="disclaimer">🧪 Симуляция на фейковом балансе — реальные деньги не используются. Три стратегии торгуют параллельно на сервере, каждая со своим стартом. Через месяц сравните, какая выиграла. Результат не гарантирует доходность на реальных деньгах.</div>
     <div class="card" style="margin-bottom:14px">
-      <h3>Серверный бот</h3>
+      <h3>Серверные боты</h3>
       <div class="sub" id="aiConf">Подключение к серверу…</div>
       <div class="addform" style="margin-bottom:0;background:transparent;padding:6px 0">
-        <input type="password" id="aiToken" placeholder="Админ-токен (если задан)" style="min-width:200px">
-        <button class="primary" id="aiRun">▶ Запустить сессию сейчас</button>
+        <input type="password" id="aiToken" placeholder="Админ-токен (если задан)" style="min-width:190px">
+        <button class="primary" id="aiRunAll">▶ Прогнать всех ботов</button>
         <button id="aiReset" style="color:var(--red)">Сбросить тест</button>
       </div>
       <div class="sub" id="aiStatus"></div>
     </div>
+
+    <div class="card" style="padding:0;margin-bottom:14px">
+      <div class="panelh">🏆 Сравнение стратегий</div>
+      <div class="tablewrap" style="border:none">
+        <table style="min-width:820px">
+          <thead><tr><th class="l">Стратегия</th><th>Баланс</th><th>Доходность</th><th>Кэш</th><th>Сделок</th><th class="l">vs «купил BTC»</th><th>Посл. сессия</th><th></th></tr></thead>
+          <tbody id="aiCompare"><tr><td colspan="8" class="loading">Загрузка…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="toolbar" id="aiBotTabs"></div>
     <div class="cards" id="aiCards"></div>
     <div class="grid2">
-      <div class="card">
-        <h3>Кривая баланса бота ($)</h3>
-        <div id="aiChart" class="muted" style="min-height:120px">Пока нет данных</div>
-      </div>
+      <div class="card"><h3>Кривая баланса бота ($)</h3><div id="aiChart" class="muted" style="min-height:120px">Пока нет данных</div></div>
       <div class="card" style="padding:0">
         <div class="panelh">Открытые позиции</div>
         <div class="tablewrap" style="border:none">
@@ -248,7 +247,7 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
       </div>
     </div>
     <div class="card" style="margin-top:14px;padding:0">
-      <div class="panelh">📋 Отчёты ИИ и журнал сделок</div>
+      <div class="panelh">📋 Отчёты и сделки выбранного бота</div>
       <div id="aiReports" class="news"><div class="loading">Отчётов пока нет</div></div>
     </div>
   </section>
@@ -268,6 +267,7 @@ let coins = [], newsCache = [], fng = null, globalData = null;
 let sortKey = "market_cap_rank", sortDir = 1;
 let portfolio = loadPF();
 let srv = null;
+let selectedBot = localStorage.getItem("cryptoradar_selbot") || null;
 
 const $ = id => document.getElementById(id);
 function fmtPrice(v){
@@ -503,7 +503,7 @@ function marketBreadth(){
 }
 function renderAnalytics(){
   if(!$("anCards")) return;
-  const a = srv && srv.bot && srv.bot.analysis;
+  const a = srv && srv.analysis;
   const cfg = srv && srv.config;
   const br = marketBreadth();
   let sentCard = a ? `<div class="card"><h3>Настроение рынка (ИИ)</h3><div class="big">${sentBadge(a.sentiment)}</div>
@@ -520,7 +520,7 @@ function renderAnalytics(){
       <div class="sub">за последний прогон · авто каждые ${cfg?cfg.analysisIntervalH:"—"} ч</div></div>` : "";
   $("anCards").innerHTML = sentCard + breadthCard + alertCard + newsCountCard;
 
-  if(srv && srv.bot && srv.bot.analysisError && !a) $("anStatus").innerHTML = '<span class="down">Ошибка анализа: '+esc(srv.bot.analysisError.msg)+'</span>';
+  if(srv && srv.analysisError && !a) $("anStatus").innerHTML = '<span class="down">Ошибка анализа: '+esc(srv.analysisError.msg)+'</span>';
   if(!a){
     $("anRisks").innerHTML = $("anOpps").innerHTML = '<div class="loading">Анализ ещё не готов — запустится автоматически на сервере</div>';
     $("anScenarios").innerHTML = '<tr><td colspan="4" class="loading">Нет данных</td></tr>';
@@ -575,10 +575,10 @@ $("pfAdd").onclick = () => {
   $("pfCoin").value=""; $("pfAmount").value=""; $("pfBuy").value="";
 };
 
+/* ---------- ИИ-боты (серверные) ---------- */
 function aiPrice(id){ const c = coins.find(x=>x.id===id); return c?c.current_price:null; }
-function aiEquity(){
-  if(!srv) return 0;
-  const bot = srv.bot; let v = bot.cash;
+function botEq(bot){
+  let v = bot.cash;
   for(const id in bot.holdings){ const p = aiPrice(id) ?? (bot.lastPrices && bot.lastPrices[id]); if(p != null) v += bot.holdings[id].amount * p; }
   return v;
 }
@@ -601,59 +601,95 @@ function aiLineChart(points, w, h, startBal){
     <span>${new Date(points[points.length-1].t).toLocaleDateString("ru-RU")}</span></div>`;
 }
 function renderAI(){
-  if(!$("aiCards") || !srv) return;
-  const bot = srv.bot, cfg = srv.config, SB = cfg.startBalance;
-  $("aiConf").innerHTML = `Модель: <b>${esc(cfg.model)}</b> · автозапуск каждые <b>${cfg.intervalH} ч</b> (на сервере, сайт можно закрывать) · ключ OpenRouter: ${cfg.hasKey?"✅ задан":"❌ НЕ задан"}${cfg.running?" · ⏳ сессия идёт":""}${bot.lastError?' · <span class="down">ошибка: '+esc(bot.lastError.msg)+"</span>":""}`;
-  const eq = coins.length ? aiEquity() : (bot.equity.length ? bot.equity[bot.equity.length-1].v : SB);
-  const pnl = eq - SB, pnlPct = (eq/SB-1)*100;
+  if(!$("aiCompare") || !srv || !srv.bots) return;
+  const cfg = srv.config, SB = cfg.startBalance;
+  const order = (cfg.botOrder || Object.keys(srv.bots)).filter(id => srv.bots[id]);
+  if(!selectedBot || !srv.bots[selectedBot]) selectedBot = order[0];
+  $("aiConf").innerHTML = `Модель: <b>${esc(cfg.model)}</b> · трейд каждые <b>${cfg.intervalH} ч</b> · аналитика <b>${cfg.analysisIntervalH} ч</b> · ключ OpenRouter: ${cfg.hasKey?"✅":"❌ нет"}${cfg.analyzing?" · ⏳ анализ идёт":""}`;
   const btc = coins.find(c=>c.id==="bitcoin");
+  $("aiCompare").innerHTML = order.map(id => {
+    const bot = srv.bots[id];
+    const eq = coins.length ? botEq(bot) : (bot.equity.length?bot.equity[bot.equity.length-1].v:SB);
+    const pnlPct = (eq/SB-1)*100;
+    let vsBtc = "—";
+    const cur = btc ? btc.current_price : bot.btcPrice;
+    if(bot.btcStart && cur){ const bv = SB*cur/bot.btcStart, df = eq-bv; vsBtc = `<span class="${df>=0?'up':'down'}">${df>=0?'+':''}$${df.toFixed(2)}</span>`; }
+    return `<tr style="cursor:pointer" data-sel="${id}">
+      <td class="l"><b>${esc(bot.label)}</b>${bot.lastError?' <span class="down" title="'+esc(bot.lastError.msg)+'">⚠</span>':''}</td>
+      <td><b>$${eq.toFixed(2)}</b></td>
+      <td><span class="${pnlPct>=0?'up':'down'}">${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</span></td>
+      <td>$${bot.cash.toFixed(2)}</td>
+      <td>${bot.trades.length}</td>
+      <td class="l">${vsBtc}</td>
+      <td class="muted">${bot.lastRun?new Date(bot.lastRun).toLocaleString("ru-RU"):"—"}</td>
+      <td><button class="runbtn" data-run="${id}">▶</button></td></tr>`;
+  }).join("");
+  $("aiCompare").querySelectorAll("tr[data-sel]").forEach(tr => tr.onclick = e => {
+    if(e.target.dataset.run) return;
+    selectedBot = tr.dataset.sel; localStorage.setItem("cryptoradar_selbot", selectedBot); renderAI();
+  });
+  $("aiCompare").querySelectorAll("button[data-run]").forEach(b => b.onclick = async ev => {
+    ev.stopPropagation();
+    b.textContent = "⏳";
+    try{ const r = await aiPost("/api/run?bot=" + encodeURIComponent(b.dataset.run)); $("aiStatus").textContent = (r.ok?"✅ ":"❌ ")+r.msg; await loadAIState(); }
+    catch(e){ $("aiStatus").textContent = "❌ "+e.message; }
+  });
+  $("aiBotTabs").innerHTML = order.map(id => `<button class="botbtn ${id===selectedBot?'active':''}" data-b="${id}">${esc(srv.bots[id].label)}</button>`).join("");
+  $("aiBotTabs").querySelectorAll("button").forEach(b => b.onclick = () => { selectedBot = b.dataset.b; localStorage.setItem("cryptoradar_selbot", selectedBot); renderAI(); });
+  renderBotDetail(selectedBot);
+}
+function renderBotDetail(id){
+  const bot = srv.bots[id], cfg = srv.config, SB = cfg.startBalance;
+  if(!bot) return;
+  const eq = coins.length ? botEq(bot) : (bot.equity.length?bot.equity[bot.equity.length-1].v:SB);
+  const pnl = eq-SB, pnlPct=(eq/SB-1)*100;
+  const btc = coins.find(c=>c.id==="bitcoin"), cur = btc?btc.current_price:bot.btcPrice;
   let btcHtml = "";
-  if(bot.btcStart && (btc || bot.btcPrice)){
-    const cur = btc ? btc.current_price : bot.btcPrice, btcVal = SB*cur/bot.btcStart, diff = eq-btcVal;
-    btcHtml = `<div class="card"><h3>Если бы просто купить BTC</h3><div class="big">$${btcVal.toFixed(2)}</div>
-      <div class="sub">Бот ${diff>=0?"опережает":"отстаёт"} на <span class="${diff>=0?"up":"down"}">$${Math.abs(diff).toFixed(2)}</span></div></div>`;
-  }
-  const days = Math.floor((Date.now()-bot.start)/864e5)+1;
+  if(bot.btcStart && cur){ const bv = SB*cur/bot.btcStart, df = eq-bv;
+    btcHtml = `<div class="card"><h3>Если бы просто купить BTC</h3><div class="big">$${bv.toFixed(2)}</div><div class="sub">эта стратегия ${df>=0?"опережает":"отстаёт"} на <span class="${df>=0?'up':'down'}">$${Math.abs(df).toFixed(2)}</span></div></div>`; }
+  const days = Math.floor((Date.now()-(srv.start||bot.equity[0].t))/864e5)+1;
+  const universe = bot.coins ? bot.coins.join(", ") : "весь топ-100";
   $("aiCards").innerHTML = `
-    <div class="card"><h3>Баланс бота</h3><div class="big">$${eq.toFixed(2)}</div>
-      <div class="sub"><span class="${pnl>=0?"up":"down"}">${pnl>=0?"+":""}$${pnl.toFixed(2)} (${pnlPct>=0?"+":""}${pnlPct.toFixed(2)}%)</span> от старта $${SB}</div></div>
+    <div class="card"><h3>${esc(bot.label)} — баланс</h3><div class="big">$${eq.toFixed(2)}</div>
+      <div class="sub"><span class="${pnl>=0?'up':'down'}">${pnl>=0?'+':''}$${pnl.toFixed(2)} (${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%)</span> от старта $${SB}</div></div>
     <div class="card"><h3>Распределение</h3><div class="big">$${bot.cash.toFixed(2)} <span class="muted" style="font-size:14px">кэш</span></div>
-      <div class="sub">в монетах: $${(eq-bot.cash).toFixed(2)} · сделок всего: ${bot.trades.length}</div></div>
+      <div class="sub">в монетах: $${(eq-bot.cash).toFixed(2)} · сделок: ${bot.trades.length}</div></div>
     ${btcHtml}
-    <div class="card"><h3>Тест идёт</h3><div class="big">${days} дн.</div>
-      <div class="sub">сессий ИИ: ${bot.reports.length} · последняя: ${bot.lastRun?new Date(bot.lastRun).toLocaleString("ru-RU"):"—"}</div></div>`;
+    <div class="card"><h3>Набор и срок</h3><div class="big">${days} дн.</div>
+      <div class="sub">монеты: ${esc(universe)} · сессий: ${bot.reports.length}</div></div>`;
   const chart = aiLineChart(bot.equity, 600, 160, SB);
-  if(chart) $("aiChart").innerHTML = chart;
+  $("aiChart").innerHTML = chart || '<div class="loading">Пока нет данных</div>';
   const ids = Object.keys(bot.holdings);
-  $("aiPositions").innerHTML = ids.length ? ids.map(id => {
-    const h = bot.holdings[id], p = aiPrice(id) ?? (bot.lastPrices && bot.lastPrices[id]), c = coins.find(x=>x.id===id);
+  $("aiPositions").innerHTML = ids.length ? ids.map(cid => {
+    const h = bot.holdings[cid], p = aiPrice(cid) ?? (bot.lastPrices && bot.lastPrices[cid]), c = coins.find(x=>x.id===cid);
     const val = p!=null?h.amount*p:null, pl = (p!=null&&h.avg)?(p/h.avg-1)*100:null;
-    return `<tr><td class="l"><div class="coin">${c?`<img src="${esc(c.image)}" alt="">`:""}${esc(c?c.name:id)}</div></td>
+    return `<tr><td class="l"><div class="coin">${c?`<img src="${esc(c.image)}" alt="">`:""}${esc(c?c.name:cid)}</div></td>
       <td>${h.amount.toPrecision(5)}</td><td>${fmtPrice(h.avg)}</td><td>${fmtPrice(p)}</td>
       <td><b>${val!=null?"$"+val.toFixed(2):"—"}</b></td>
-      <td>${pl!=null?`<span class="${pl>=0?"up":"down"}">${pl>=0?"+":""}${pl.toFixed(1)}%</span>`:"—"}</td></tr>`;
+      <td>${pl!=null?`<span class="${pl>=0?'up':'down'}">${pl>=0?'+':''}${pl.toFixed(1)}%</span>`:"—"}</td></tr>`;
   }).join("") : '<tr><td colspan="6" class="loading">Позиций нет — весь баланс в кэше</td></tr>';
   $("aiReports").innerHTML = bot.reports.length ? bot.reports.slice().reverse().map(r => `<div class="item">
-    <div class="meta">${new Date(r.t).toLocaleString("ru-RU")} · ${esc(r.model)} · ${r.trigger==="auto"?"автозапуск":r.trigger==="startup"?"старт сервера":"вручную"} · баланс после сессии: <b>$${r.equity.toFixed(2)}</b></div>
+    <div class="meta">${new Date(r.t).toLocaleString("ru-RU")} · ${r.trigger==="auto"?"автозапуск":r.trigger==="startup"?"старт":"вручную"} · баланс: <b>$${r.equity.toFixed(2)}</b></div>
     <div class="title">Анализ: <span style="font-weight:400">${esc(r.analysis)}</span></div>
     ${r.actions.length ? `<div class="body" style="-webkit-line-clamp:unset">${r.actions.map(a=>`${a.type==="buy"?"🟢 Купил":"🔴 Продал"} ${esc(a.id)} на $${a.usd} по ${fmtPrice(a.price)} — ${esc(a.reason)}`).join("<br>")}</div>` : '<div class="body">Сделок не совершал — решил подождать.</div>'}
-    <div class="tags">План: ${esc(r.outlook)}</div></div>`).join("") : '<div class="loading">Отчётов пока нет — первая сессия запустится автоматически</div>';
+    <div class="tags">План: ${esc(r.outlook)}</div></div>`).join("") : '<div class="loading">Отчётов пока нет</div>';
 }
 function getToken(){ const t = (($("aiToken")&&$("aiToken").value) || ($("anToken")&&$("anToken").value) || "").trim(); localStorage.setItem("cryptoradar_token", t); return t; }
 async function aiPost(url){
   const token = getToken();
-  const r = await fetch(url + (token ? "?token=" + encodeURIComponent(token) : ""), {method:"POST"});
+  const sep = url.indexOf("?")>=0 ? "&" : "?";
+  const r = await fetch(url + (token ? sep+"token=" + encodeURIComponent(token) : ""), {method:"POST"});
   return r.json();
 }
 $("aiToken").value = $("anToken").value = localStorage.getItem("cryptoradar_token") || "";
-$("aiRun").onclick = async () => {
-  $("aiRun").textContent = "⏳ ИИ думает…"; $("aiStatus").textContent = "Запуск сессии на сервере…";
+$("aiRunAll").onclick = async () => {
+  $("aiRunAll").textContent = "⏳ Боты думают…"; $("aiStatus").textContent = "Прогон всех ботов (может занять минуту)…";
   try{ const r = await aiPost("/api/run"); $("aiStatus").textContent = (r.ok?"✅ ":"❌ ") + r.msg; await loadAIState(); }
   catch(e){ $("aiStatus").textContent = "❌ " + e.message; }
-  finally{ $("aiRun").textContent = "▶ Запустить сессию сейчас"; }
+  finally{ $("aiRunAll").textContent = "▶ Прогнать всех ботов"; }
 };
 $("aiReset").onclick = async () => {
-  if(!confirm("Сбросить тест? Вся история бота будет удалена.")) return;
+  if(!confirm("Сбросить тест? История всех ботов будет удалена.")) return;
   try{ const r = await aiPost("/api/reset"); $("aiStatus").textContent = (r.ok?"✅ ":"❌ ") + r.msg; await loadAIState(); }
   catch(e){ $("aiStatus").textContent = "❌ " + e.message; }
 };
