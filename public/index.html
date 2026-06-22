@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>КриптоРадар — рынок, сигналы, новости, ИИ-бот</title>
+<title>КриптоРадар — рынок, аналитика ИИ, новости</title>
 <style>
 :root{
   --bg:#0b0e14; --panel:#131722; --panel2:#1a2030; --border:#232a3b;
@@ -43,7 +43,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}
 th,td{padding:10px 12px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--border)}
 th{color:var(--muted);font-size:12px;font-weight:500;cursor:pointer;user-select:none;position:sticky;top:0;background:var(--panel)}
 th:hover{color:var(--text)}
-th.l,td.l{text-align:left}
+th.l,td.l{text-align:left;white-space:normal}
 tr:hover td{background:var(--panel2)}
 td .coin{display:flex;align-items:center;gap:8px}
 td .coin img{width:22px;height:22px;border-radius:50%}
@@ -52,6 +52,11 @@ td .coin .sym{color:var(--muted);font-size:12px;text-transform:uppercase}
 .badge.buy{background:rgba(22,199,132,.15);color:var(--green)}
 .badge.sell{background:rgba(234,57,67,.15);color:var(--red)}
 .badge.neu{background:rgba(139,147,167,.15);color:var(--muted)}
+.badge.bull{background:rgba(22,199,132,.15);color:var(--green)}
+.badge.bear{background:rgba(234,57,67,.15);color:var(--red)}
+.badge.hi{background:rgba(234,57,67,.18);color:#ff8a91}
+.badge.mid{background:rgba(240,185,11,.18);color:var(--yellow)}
+.badge.lo{background:rgba(139,147,167,.15);color:var(--muted)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
 .siglist .item{display:flex;gap:12px;align-items:flex-start;padding:12px;border-bottom:1px solid var(--border)}
@@ -59,7 +64,7 @@ td .coin .sym{color:var(--muted);font-size:12px;text-transform:uppercase}
 .siglist img{width:28px;height:28px;border-radius:50%;margin-top:2px}
 .siglist .why{font-size:12px;color:var(--muted);margin-top:3px}
 .siglist .score{margin-left:auto;font-weight:700;font-size:16px}
-.panelh{padding:12px 14px;border-bottom:1px solid var(--border);font-weight:600;display:flex;align-items:center;gap:8px}
+.panelh{padding:12px 14px;border-bottom:1px solid var(--border);font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .news .item{padding:13px 14px;border-bottom:1px solid var(--border)}
 .news .item:last-child{border-bottom:none}
 .news .meta{font-size:12px;color:var(--muted);margin-bottom:3px}
@@ -74,6 +79,9 @@ td .coin .sym{color:var(--muted);font-size:12px;text-transform:uppercase}
 .addform{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:14px;background:var(--panel2);border-radius:10px;margin-bottom:14px}
 .del{background:none;border:none;color:var(--red);cursor:pointer;font-size:16px;padding:2px 6px}
 .spark{vertical-align:middle}
+.bullet{padding:9px 14px;border-bottom:1px solid var(--border);font-size:13px}
+.bullet:last-child{border-bottom:none}
+.outlook{font-size:15px;line-height:1.6}
 footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;border-top:1px solid var(--border);margin-top:30px}
 .hidden{display:none}
 </style>
@@ -94,6 +102,7 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
 
   <nav class="tabs">
     <button data-tab="market" class="active">Рынок</button>
+    <button data-tab="analytics">🧠 Аналитика ИИ</button>
     <button data-tab="signals">Сигналы</button>
     <button data-tab="news">Новости</button>
     <button data-tab="portfolio">Портфель</button>
@@ -130,8 +139,47 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
     </div>
   </section>
 
+  <section id="tab-analytics" class="hidden">
+    <div class="disclaimer">🧠 ИИ изучает поток новостей со множества источников, рынок и индекс настроений и делает выводы. Это <b>аналитика и сценарии с оценкой вероятности, а не предсказание</b>. Никакой алгоритм не знает заранее, что и когда случится. Используйте как помощь в решениях, а не как гарантию.</div>
+    <div class="toolbar">
+      <input type="password" id="anToken" placeholder="Админ-токен (если задан)" style="min-width:190px">
+      <button class="primary" id="anRun">🧠 Обновить анализ сейчас</button>
+      <span class="sub muted" id="anStatus"></span>
+    </div>
+    <div class="cards" id="anCards"></div>
+    <div class="grid2">
+      <div class="card" style="padding:0">
+        <div class="panelh">⚠️ Ключевые риски</div>
+        <div id="anRisks"><div class="loading">Нет данных</div></div>
+      </div>
+      <div class="card" style="padding:0">
+        <div class="panelh">💡 Возможности</div>
+        <div id="anOpps"><div class="loading">Нет данных</div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px;padding:0">
+      <div class="panelh">🎲 Сценарии (вероятность → влияние)</div>
+      <div class="tablewrap" style="border:none">
+        <table style="min-width:700px">
+          <thead><tr><th class="l">Событие</th><th>Вероятность</th><th class="l">Влияние</th><th class="l">Монеты</th></tr></thead>
+          <tbody id="anScenarios"><tr><td colspan="4" class="loading">Нет данных</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card" style="padding:0">
+        <div class="panelh">🪙 Заметки по монетам</div>
+        <div id="anCoins"><div class="loading">Нет данных</div></div>
+      </div>
+      <div class="card" style="padding:0">
+        <div class="panelh">📰 Важнейшие новости (по версии ИИ)</div>
+        <div class="news" id="anNews"><div class="loading">Нет данных</div></div>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-signals" class="hidden">
-    <div class="disclaimer">⚠️ Сигналы рассчитываются автоматически по техническим индикаторам (RSI, моментум, тренд, объёмы) на основе данных за 7 дней. Это <b>ориентиры, а не гарантии</b> — никакой алгоритм не предсказывает рынок достоверно. Не инвестируйте больше, чем готовы потерять. Это не финансовый совет.</div>
+    <div class="disclaimer">⚠️ Сигналы рассчитываются автоматически по техническим индикаторам (RSI, моментум, тренд, объёмы). Это ориентиры, а не гарантии. Сопоставляйте их с вкладкой «Аналитика ИИ» и новостями.</div>
     <div class="grid2">
       <div class="card" style="padding:0">
         <div class="panelh">📈 Кандидаты на рост <span class="muted" style="font-weight:400;font-size:12px">— перепроданы / восходящий тренд</span></div>
@@ -142,17 +190,11 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
         <div class="siglist" id="sigSell"><div class="loading">Загрузка…</div></div>
       </div>
     </div>
-    <div class="card" style="margin-top:14px">
-      <h3>Как читать сигналы</h3>
-      <div class="muted" style="font-size:13px">
-        <b style="color:var(--text)">RSI&nbsp;&lt;&nbsp;30</b> — актив перепродан, исторически часто следует отскок. <b style="color:var(--text)">RSI&nbsp;&gt;&nbsp;70</b> — перекуплен, выше риск коррекции. <b style="color:var(--text)">Цена выше средней за 7д</b> — восходящий моментум. Сопоставляйте сигналы с новостями — крупные события (регулирование, ETF, взломы, решения ФРС) перевешивают любую техническую картину.
-      </div>
-    </div>
   </section>
 
   <section id="tab-news" class="hidden">
     <div class="card news" style="padding:0">
-      <div class="panelh">📰 Последние новости крипторынка <span class="muted" style="font-weight:400;font-size:12px">— ForkLog (рус.), Cointelegraph, CoinDesk, CryptoCompare</span></div>
+      <div class="panelh">📰 Поток новостей крипторынка <span class="muted" style="font-weight:400;font-size:12px">— ForkLog (рус.), Cointelegraph, CoinDesk, Decrypt, CryptoCompare и др.</span></div>
       <div id="newsList"><div class="loading">Загрузка новостей…</div></div>
     </div>
   </section>
@@ -171,17 +213,14 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
     </div>
     <div class="tablewrap">
       <table style="min-width:700px">
-        <thead><tr>
-          <th class="l">Монета</th><th>Количество</th><th>Цена</th><th>24ч</th><th>Стоимость</th><th>Прибыль/убыток</th><th></th>
-        </tr></thead>
+        <thead><tr><th class="l">Монета</th><th>Количество</th><th>Цена</th><th>24ч</th><th>Стоимость</th><th>Прибыль/убыток</th><th></th></tr></thead>
         <tbody id="pfBody"><tr><td colspan="7" class="loading">Портфель пуст — добавьте монеты выше</td></tr></tbody>
       </table>
     </div>
   </section>
 
   <section id="tab-ai" class="hidden">
-    <div class="disclaimer">🧪 Это <b>симуляция на фейковом балансе</b> — реальные деньги не используются. Бот работает <b>на сервере</b> и торгует сам по расписанию, даже когда сайт закрыт. Результаты теста за месяц <b>не гарантируют</b> такую же доходность на реальных деньгах.</div>
-
+    <div class="disclaimer">🧪 Симуляция на фейковом балансе — реальные деньги не используются. Бот работает на сервере и торгует сам по расписанию. Результат теста за месяц не гарантирует доходность на реальных деньгах.</div>
     <div class="card" style="margin-bottom:14px">
       <h3>Серверный бот</h3>
       <div class="sub" id="aiConf">Подключение к серверу…</div>
@@ -192,9 +231,7 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
       </div>
       <div class="sub" id="aiStatus"></div>
     </div>
-
     <div class="cards" id="aiCards"></div>
-
     <div class="grid2">
       <div class="card">
         <h3>Кривая баланса бота ($)</h3>
@@ -210,7 +247,6 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
         </div>
       </div>
     </div>
-
     <div class="card" style="margin-top:14px;padding:0">
       <div class="panelh">📋 Отчёты ИИ и журнал сделок</div>
       <div id="aiReports" class="news"><div class="loading">Отчётов пока нет</div></div>
@@ -221,7 +257,7 @@ footer{padding:24px 16px;color:var(--muted);font-size:12px;text-align:center;bor
 </div>
 
 <footer>
-  КриптоРадар · Данные: CoinGecko, Alternative.me, CryptoCompare · ИИ-бот: OpenRouter (paper trading)<br>
+  КриптоРадар · Данные: CoinGecko, Alternative.me, новостные RSS · ИИ: OpenRouter<br>
   Информация носит справочный характер и не является финансовым советом.
 </footer>
 
@@ -312,14 +348,15 @@ async function loadMarkets(){
     c.p7d = c.price_change_percentage_7d_in_currency;
     computeSignal(c); return c;
   });
-  renderTable(); renderSignals(); renderCards(); renderPortfolio(); fillDatalist(); renderAI();
+  renderTable(); renderSignals(); renderCards(); renderPortfolio(); fillDatalist(); renderAI(); renderAnalytics();
 }
 async function loadGlobal(){ const g = await getJSON(API + "/global"); globalData = g.data; renderGlobalBar(); renderCards(); }
-async function loadFNG(){ const r = await getJSON("https://api.alternative.me/fng/?limit=2"); fng = r.data; renderCards(); }
+async function loadFNG(){ const r = await getJSON("https://api.alternative.me/fng/?limit=2"); fng = r.data; renderCards(); renderAnalytics(); }
 const RSS_FEEDS = [
   {url:"https://forklog.com/feed/",name:"ForkLog (рус.)"},
   {url:"https://cointelegraph.com/rss",name:"Cointelegraph"},
-  {url:"https://www.coindesk.com/arc/outboundfeeds/rss/",name:"CoinDesk"}
+  {url:"https://www.coindesk.com/arc/outboundfeeds/rss/",name:"CoinDesk"},
+  {url:"https://decrypt.co/feed",name:"Decrypt"}
 ];
 function stripHTML(s){ const d=document.createElement("div"); d.innerHTML=s||""; return (d.textContent||"").trim(); }
 async function fetchRSS(feed){
@@ -439,11 +476,71 @@ function renderCards(){
 }
 function renderNews(items){
   if(!items.length){ $("newsList").innerHTML = '<div class="loading">Новостей нет</div>'; return; }
-  $("newsList").innerHTML = items.slice(0,50).map(n => `<div class="item">
+  $("newsList").innerHTML = items.slice(0,60).map(n => `<div class="item">
     <div class="meta">${timeAgo(n.ts)} · ${esc(n.source)}</div>
     <div class="title"><a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a></div>
     <div class="body">${esc(n.body)}</div><div class="tags">${esc(n.tags)}</div></div>`).join("");
 }
+
+function probBadge(p){
+  const s = String(p||"").toLowerCase();
+  if(s.indexOf("выс")>=0) return '<span class="badge hi">высокая</span>';
+  if(s.indexOf("сред")>=0) return '<span class="badge mid">средняя</span>';
+  if(s.indexOf("низ")>=0) return '<span class="badge lo">низкая</span>';
+  return '<span class="badge lo">'+esc(p||"—")+'</span>';
+}
+function sentBadge(s){
+  const v = String(s||"").toLowerCase();
+  if(v.indexOf("bull")>=0) return '<span class="badge bull">бычий</span>';
+  if(v.indexOf("bear")>=0) return '<span class="badge bear">медвежий</span>';
+  return '<span class="badge neu">нейтр.</span>';
+}
+function marketBreadth(){
+  if(!coins.length) return null;
+  const up = coins.filter(c=>(c.p24h||0)>0).length;
+  const avg = coins.reduce((a,c)=>a+(c.p24h||0),0)/coins.length;
+  return {up, down: coins.length-up, avg};
+}
+function renderAnalytics(){
+  if(!$("anCards")) return;
+  const a = srv && srv.bot && srv.bot.analysis;
+  const cfg = srv && srv.config;
+  const br = marketBreadth();
+  let sentCard = a ? `<div class="card"><h3>Настроение рынка (ИИ)</h3><div class="big">${sentBadge(a.sentiment)}</div>
+      <div class="sub">обновлено: ${new Date(a.t).toLocaleString("ru-RU")}${cfg?" · модель "+esc(cfg.model):""}</div></div>`
+    : `<div class="card"><h3>Настроение рынка (ИИ)</h3><div class="big muted">—</div><div class="sub">Анализ ещё не сделан${cfg&&!cfg.hasKey?" (нет ключа)":""}</div></div>`;
+  const breadthCard = br ? `<div class="card"><h3>Ширина рынка (24ч)</h3><div class="big"><span class="up">${br.up}↑</span> / <span class="down">${br.down}↓</span></div>
+      <div class="sub">средн. изменение топ-100: <span class="${br.avg>=0?'up':'down'}">${br.avg>=0?'+':''}${br.avg.toFixed(2)}%</span></div></div>` : "";
+  const movers = coins.filter(c=>Math.abs(c.p24h||0)>=10 || Math.abs(c.p1h||0)>=4)
+    .sort((x,y)=>Math.abs(y.p24h||0)-Math.abs(x.p24h||0)).slice(0,3);
+  const alertCard = `<div class="card"><h3>Резкие движения</h3>${movers.length
+    ? '<div class="big" style="font-size:15px">'+movers.map(c=>`${esc(c.symbol.toUpperCase())} ${pct(c.p24h)}`).join("<br>")+'</div>'
+    : '<div class="big muted" style="font-size:15px">спокойно</div>'}<div class="sub">монеты с движением ±10% за 24ч</div></div>`;
+  const newsCountCard = a ? `<div class="card"><h3>Изучено новостей</h3><div class="big">${a.newsCount||"—"}</div>
+      <div class="sub">за последний прогон · авто каждые ${cfg?cfg.analysisIntervalH:"—"} ч</div></div>` : "";
+  $("anCards").innerHTML = sentCard + breadthCard + alertCard + newsCountCard;
+
+  if(srv && srv.bot && srv.bot.analysisError && !a) $("anStatus").innerHTML = '<span class="down">Ошибка анализа: '+esc(srv.bot.analysisError.msg)+'</span>';
+  if(!a){
+    $("anRisks").innerHTML = $("anOpps").innerHTML = '<div class="loading">Анализ ещё не готов — запустится автоматически на сервере</div>';
+    $("anScenarios").innerHTML = '<tr><td colspan="4" class="loading">Нет данных</td></tr>';
+    $("anCoins").innerHTML = $("anNews").innerHTML = '<div class="loading">Нет данных</div>';
+    return;
+  }
+  $("anRisks").innerHTML = `<div class="bullet outlook"><b>Вывод ИИ:</b> ${esc(a.market_outlook)}</div>` +
+    ((a.key_risks||[]).map(r=>`<div class="bullet">⚠️ ${esc(r)}</div>`).join("") || '<div class="bullet muted">не выделено</div>');
+  $("anOpps").innerHTML = (a.opportunities||[]).map(o=>`<div class="bullet">💡 ${esc(o)}</div>`).join("") || '<div class="bullet muted">не выделено</div>';
+  $("anScenarios").innerHTML = (a.scenarios||[]).length ? a.scenarios.map(s=>`<tr>
+      <td class="l">${esc(s.event)}</td><td>${probBadge(s.probability)}</td>
+      <td class="l">${esc(s.impact)}</td><td class="l muted">${esc((s.coins||[]).join(", "))}</td></tr>`).join("")
+    : '<tr><td colspan="4" class="loading">Сценарии не выделены</td></tr>';
+  $("anCoins").innerHTML = (a.coin_notes||[]).length ? a.coin_notes.map(c=>`<div class="bullet">${sentBadge(c.sentiment)} <b>${esc(c.coin)}</b> — ${esc(c.note)}</div>`).join("")
+    : '<div class="bullet muted">нет заметок</div>';
+  $("anNews").innerHTML = (a.top_news||[]).length ? a.top_news.map(n=>`<div class="item">
+      <div class="title">${esc(n.title)}</div><div class="body" style="-webkit-line-clamp:unset">${esc(n.why)}</div></div>`).join("")
+    : '<div class="loading">нет данных</div>';
+}
+
 function loadPF(){ try{ return JSON.parse(localStorage.getItem("cryptoradar_pf")||"[]"); }catch(e){ return []; } }
 function savePF(){ localStorage.setItem("cryptoradar_pf", JSON.stringify(portfolio)); }
 function fillDatalist(){ $("coinlist").innerHTML = coins.map(c => `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.symbol.toUpperCase())})</option>`).join(""); }
@@ -477,6 +574,7 @@ $("pfAdd").onclick = () => {
   portfolio.push({id,amount,buyPrice}); savePF(); renderPortfolio();
   $("pfCoin").value=""; $("pfAmount").value=""; $("pfBuy").value="";
 };
+
 function aiPrice(id){ const c = coins.find(x=>x.id===id); return c?c.current_price:null; }
 function aiEquity(){
   if(!srv) return 0;
@@ -485,8 +583,8 @@ function aiEquity(){
   return v;
 }
 async function loadAIState(){
-  try{ const r = await fetch("/api/state"); if(!r.ok) throw new Error("HTTP "+r.status); srv = await r.json(); renderAI(); }
-  catch(e){ $("aiConf").textContent = "⚠️ Сервер недоступен: " + e.message; }
+  try{ const r = await fetch("/api/state"); if(!r.ok) throw new Error("HTTP "+r.status); srv = await r.json(); renderAI(); renderAnalytics(); }
+  catch(e){ if($("aiConf")) $("aiConf").textContent = "⚠️ Сервер недоступен: " + e.message; }
 }
 function aiLineChart(points, w, h, startBal){
   if(!points || points.length < 2) return null;
@@ -541,13 +639,13 @@ function renderAI(){
     ${r.actions.length ? `<div class="body" style="-webkit-line-clamp:unset">${r.actions.map(a=>`${a.type==="buy"?"🟢 Купил":"🔴 Продал"} ${esc(a.id)} на $${a.usd} по ${fmtPrice(a.price)} — ${esc(a.reason)}`).join("<br>")}</div>` : '<div class="body">Сделок не совершал — решил подождать.</div>'}
     <div class="tags">План: ${esc(r.outlook)}</div></div>`).join("") : '<div class="loading">Отчётов пока нет — первая сессия запустится автоматически</div>';
 }
-$("aiToken").value = localStorage.getItem("cryptoradar_token") || "";
+function getToken(){ const t = (($("aiToken")&&$("aiToken").value) || ($("anToken")&&$("anToken").value) || "").trim(); localStorage.setItem("cryptoradar_token", t); return t; }
 async function aiPost(url){
-  const token = $("aiToken").value.trim();
-  localStorage.setItem("cryptoradar_token", token);
+  const token = getToken();
   const r = await fetch(url + (token ? "?token=" + encodeURIComponent(token) : ""), {method:"POST"});
   return r.json();
 }
+$("aiToken").value = $("anToken").value = localStorage.getItem("cryptoradar_token") || "";
 $("aiRun").onclick = async () => {
   $("aiRun").textContent = "⏳ ИИ думает…"; $("aiStatus").textContent = "Запуск сессии на сервере…";
   try{ const r = await aiPost("/api/run"); $("aiStatus").textContent = (r.ok?"✅ ":"❌ ") + r.msg; await loadAIState(); }
@@ -559,10 +657,17 @@ $("aiReset").onclick = async () => {
   try{ const r = await aiPost("/api/reset"); $("aiStatus").textContent = (r.ok?"✅ ":"❌ ") + r.msg; await loadAIState(); }
   catch(e){ $("aiStatus").textContent = "❌ " + e.message; }
 };
+$("anRun").onclick = async () => {
+  $("anRun").textContent = "⏳ ИИ изучает рынок…"; $("anStatus").textContent = "Сбор новостей и анализ на сервере (может занять до минуты)…";
+  try{ const r = await aiPost("/api/analyze"); $("anStatus").textContent = (r.ok?"✅ ":"❌ ") + r.msg; await loadAIState(); }
+  catch(e){ $("anStatus").textContent = "❌ " + e.message; }
+  finally{ $("anRun").textContent = "🧠 Обновить анализ сейчас"; }
+};
+
 document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav.tabs button").forEach(x => x.classList.remove("active"));
   b.classList.add("active");
-  ["market","signals","news","portfolio","ai"].forEach(t => $("tab-"+t).classList.toggle("hidden", t !== b.dataset.tab));
+  ["market","analytics","signals","news","portfolio","ai"].forEach(t => $("tab-"+t).classList.toggle("hidden", t !== b.dataset.tab));
 });
 document.querySelectorAll("#tbl th[data-k]").forEach(th => th.onclick = () => {
   const k = th.dataset.k;
